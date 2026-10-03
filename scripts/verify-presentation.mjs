@@ -5,6 +5,9 @@ const ROOT_DIR = process.cwd();
 const MANIFEST_PATH = path.join(ROOT_DIR, 'src', 'media-manifest.json');
 const CSS_PATH = path.join(ROOT_DIR, 'src', 'index.css');
 const FOTOS_DIR = path.join(ROOT_DIR, 'FOTOS CEPM');
+const PUBLIC_FOTOS_DIR = path.join(ROOT_DIR, 'public', 'fotos-cepm');
+const DIST_FOTOS_DIR = path.join(ROOT_DIR, 'dist', 'fotos-cepm');
+const DIST_LOGO_PATH = path.join(ROOT_DIR, 'dist', 'logo', 'logo_CEPM_transparente.png');
 
 async function runVerification() {
   console.log('=====================================================');
@@ -20,7 +23,7 @@ async function runVerification() {
   console.log(`[Item 1] Total de mídias consolidadas: ${manifest.totalMedia}`);
   console.log(`[Item 2] Total de Imagens: ${manifest.imagesCount}`);
   console.log(`[Item 3] Total de Vídeos: ${manifest.videosCount}`);
-  console.log(`[Item 4] Logo oficial: ${manifest.logo}`);
+  console.log(`[Item 4] Logo oficial pública: ${manifest.logo}`);
   console.log(`[Item 5] Músicas detectadas: ${manifest.audioTracks.length} (${manifest.audioTracks.map(a => a.name).join(', ') || 'Nenhuma música no momento'})`);
 
   if (manifest.totalMedia <= 0) {
@@ -33,36 +36,42 @@ async function runVerification() {
     throw new Error('VIOLAÇÃO CRÍTICA: Encontrada menção à música da Semana de Geografia no manifesto!');
   }
 
-  // 3. Verificação de integridade física dos arquivos de imagem no disco
-  console.log('\n🔍 Verificando se todas as mídias do manifesto existem no disco...');
+  // 3. Verificação de integridade física dos arquivos de imagem no disco (na pasta pública)
+  console.log('\n🔍 Verificando se todas as mídias do manifesto existem na pasta pública...');
   let missingFiles = 0;
   for (const item of manifest.items) {
-    const diskPath = path.join(ROOT_DIR, item.relativePath.replace(/^\//, ''));
+    let diskPath = path.join(ROOT_DIR, 'public', item.relativePath.replace(/^\//, ''));
     if (!fs.existsSync(diskPath)) {
-      console.error(`❌ Arquivo ausente no disco: ${item.relativePath}`);
+      diskPath = path.join(ROOT_DIR, item.relativePath.replace(/^\//, ''));
+    }
+    if (!fs.existsSync(diskPath)) {
+      console.error(`❌ Arquivo ausente na pasta pública: ${item.relativePath}`);
       missingFiles++;
     }
   }
   if (missingFiles > 0) {
     throw new Error(`${missingFiles} arquivos do manifesto não foram encontrados no disco!`);
   }
-  console.log(`  ✅ Todos os ${manifest.totalMedia} arquivos existem fisicamente no disco!`);
+  console.log(`  ✅ Todos os ${manifest.totalMedia} arquivos existem fisicamente em public/fotos-cepm!`);
 
-  // 4. Verificação de que todas as fotos de "FOTOS CEPM" foram incluídas
+  // 4. Verificação de que todas as fotos da pasta master "FOTOS CEPM" foram sincronizadas
   const diskPhotos = fs.readdirSync(FOTOS_DIR).filter(f => {
     const ext = path.extname(f).toLowerCase();
     return ['.jpg', '.jpeg', '.png', '.webp', '.avif', '.gif'].includes(ext);
   });
-  console.log(`\n📸 Fotografias na pasta "FOTOS CEPM": ${diskPhotos.length}`);
+  console.log(`\n📸 Fotografias na pasta master "FOTOS CEPM": ${diskPhotos.length}`);
   console.log(`📸 Fotografias computadas no manifesto: ${manifest.imagesCount}`);
   if (diskPhotos.length !== manifest.imagesCount + manifest.duplicatesCount) {
     throw new Error(`Inconsistência: ${diskPhotos.length} fotos no disco vs ${manifest.imagesCount} no manifesto!`);
   }
   console.log('  ✅ 100% das fotografias válidas foram incluídas no manifesto!');
 
-  // 5. Verificação da Logo Oficial
+  // 5. Verificação da Logo Oficial Pública
   console.log('\n🛡️ Verificando integridade da logo oficial...');
-  const logoPath = path.join(ROOT_DIR, manifest.logo.replace(/^\//, ''));
+  let logoPath = path.join(ROOT_DIR, 'public', manifest.logo.replace(/^\//, ''));
+  if (!fs.existsSync(logoPath)) {
+    logoPath = path.join(ROOT_DIR, manifest.logo.replace(/^\//, ''));
+  }
   if (!fs.existsSync(logoPath)) {
     throw new Error(`Logo oficial não encontrada no caminho: ${logoPath}`);
   }
@@ -101,7 +110,23 @@ async function runVerification() {
     throw new Error('Paleta de cores do CEPM ausente no CSS');
   }
 
-  // 9. Teste de requisições HTTP locais no Vite se o servidor estiver rodando
+  // 9. Verificação da pasta dist se gerada
+  if (fs.existsSync(DIST_FOTOS_DIR)) {
+    console.log('\n📦 Verificando pasta de produção dist/...');
+    const distPhotos = fs.readdirSync(DIST_FOTOS_DIR);
+    console.log(`  📸 Imagens presentes em dist/fotos-cepm: ${distPhotos.length} (Esperado: ${manifest.imagesCount})`);
+    if (distPhotos.length !== manifest.imagesCount) {
+      throw new Error(`Inconsistência no build dist/: ${distPhotos.length} fotos em dist vs ${manifest.imagesCount} no manifesto!`);
+    }
+    if (fs.existsSync(DIST_LOGO_PATH)) {
+      console.log('  🛡️ Logo oficial presente em dist/logo/logo_CEPM_transparente.png [OK]');
+    } else {
+      throw new Error('Logo oficial ausente em dist/logo/!');
+    }
+    console.log('  ✅ Build de produção dist/ contém 100% dos ativos estáticos!');
+  }
+
+  // 10. Teste de requisições HTTP locais no Vite se o servidor estiver rodando
   const baseUrl = 'http://localhost:5173';
   try {
     const testRes = await fetch(`${baseUrl}/`, { method: 'HEAD' });
@@ -125,7 +150,7 @@ async function runVerification() {
       }
     }
   } catch (err) {
-    console.log('\nℹ️ Servidor Vite não está rodando no momento. Testes de rede serão validados na etapa com dev server.');
+    console.log('\nℹ️ Servidor Vite não está respondendo na porta padrão 5173.');
   }
 
   console.log('\n=====================================================');

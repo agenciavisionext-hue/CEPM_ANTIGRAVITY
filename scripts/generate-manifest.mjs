@@ -4,7 +4,15 @@ import crypto from 'crypto';
 
 const ROOT_DIR = process.cwd();
 const FOTOS_DIR = path.join(ROOT_DIR, 'FOTOS CEPM');
-const LOGO_DIR = path.join(ROOT_DIR, 'LOGO');
+const LOGO_SOURCE = path.join(ROOT_DIR, 'logo_CEPM_transparente.png');
+const LOGO_DIR_SOURCE = path.join(ROOT_DIR, 'LOGO', 'logo_CEPM_transparente.png');
+const AUDIO_DIR = path.join(ROOT_DIR, 'AUDIO');
+
+const PUBLIC_DIR = path.join(ROOT_DIR, 'public');
+const PUBLIC_FOTOS_DIR = path.join(PUBLIC_DIR, 'fotos-cepm');
+const PUBLIC_LOGO_DIR = path.join(PUBLIC_DIR, 'logo');
+const PUBLIC_AUDIO_DIR = path.join(PUBLIC_DIR, 'audio');
+
 const OUTPUT_DIR = path.join(ROOT_DIR, 'src');
 const OUTPUT_FILE = path.join(OUTPUT_DIR, 'media-manifest.json');
 
@@ -18,6 +26,12 @@ function getFileHash(filePath) {
     return crypto.createHash('md5').update(fileBuffer).digest('hex');
   } catch (err) {
     return null;
+  }
+}
+
+function ensureDir(dir) {
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
   }
 }
 
@@ -41,12 +55,11 @@ function scanDirectoryRecursively(dir) {
       }
 
       if (type) {
-        const relativeToRoot = path.relative(ROOT_DIR, fullPath).replace(/\\/g, '/');
         const stat = fs.statSync(fullPath);
         const hash = getFileHash(fullPath);
         results.push({
           filename: entry.name,
-          relativePath: `/${relativeToRoot}`,
+          sourcePath: fullPath,
           type,
           extension: ext,
           size: stat.size,
@@ -59,29 +72,65 @@ function scanDirectoryRecursively(dir) {
   return results;
 }
 
-function scanAudioTracks() {
+function syncLogoToPublic() {
+  ensureDir(PUBLIC_LOGO_DIR);
+
+  let sourceLogo = null;
+  if (fs.existsSync(LOGO_SOURCE)) {
+    sourceLogo = LOGO_SOURCE;
+  } else if (fs.existsSync(LOGO_DIR_SOURCE)) {
+    sourceLogo = LOGO_DIR_SOURCE;
+  }
+
+  if (sourceLogo) {
+    const targetPath = path.join(PUBLIC_LOGO_DIR, 'logo_CEPM_transparente.png');
+    let shouldCopy = true;
+    if (fs.existsSync(targetPath)) {
+      const sourceStat = fs.statSync(sourceLogo);
+      const targetStat = fs.statSync(targetPath);
+      if (sourceStat.size === targetStat.size) {
+        shouldCopy = false;
+      }
+    }
+    if (shouldCopy) {
+      fs.copyFileSync(sourceLogo, targetPath);
+    }
+    return '/logo/logo_CEPM_transparente.png';
+  }
+
+  return null;
+}
+
+function syncAudioToPublic() {
+  ensureDir(PUBLIC_AUDIO_DIR);
   const audioTracks = [];
   const checkedNames = new Set();
+
   const dirsToScan = [
-    { dir: path.join(ROOT_DIR, 'public', 'audio'), urlPrefix: '/audio/' },
-    { dir: path.join(ROOT_DIR, 'AUDIO'), urlPrefix: '/AUDIO/' },
-    { dir: path.join(ROOT_DIR, 'audio'), urlPrefix: '/audio/' }
+    { dir: PUBLIC_AUDIO_DIR, urlPrefix: '/audio/' },
+    { dir: AUDIO_DIR, urlPrefix: '/audio/' }
   ];
 
   for (const item of dirsToScan) {
     if (fs.existsSync(item.dir)) {
-      const files = fs.readdirSync(item.dir, { withFileTypes: true, recursive: true });
+      const files = fs.readdirSync(item.dir, { withFileTypes: true });
       for (const file of files) {
         if (file.isFile()) {
           const ext = path.extname(file.name).toLowerCase();
           if (AUDIO_EXTENSIONS.has(ext) && !checkedNames.has(file.name.toLowerCase())) {
             checkedNames.add(file.name.toLowerCase());
-            const fullFilePath = path.join(file.parentPath || item.dir, file.name);
-            const relativeToDir = path.relative(item.dir, fullFilePath).replace(/\\/g, '/');
-            const webUrl = `${item.urlPrefix}${relativeToDir}`;
+
+            // Se o arquivo estiver em AUDIO/, sincroniza com public/audio/
+            if (item.dir === AUDIO_DIR) {
+              const targetPath = path.join(PUBLIC_AUDIO_DIR, file.name);
+              if (!fs.existsSync(targetPath)) {
+                fs.copyFileSync(path.join(AUDIO_DIR, file.name), targetPath);
+              }
+            }
+
             audioTracks.push({
               name: file.name,
-              path: webUrl,
+              path: `/audio/${file.name}`,
               title: file.name.replace(/\.[^/.]+$/, '').replace(/_/g, ' ')
             });
           }
@@ -90,39 +139,62 @@ function scanAudioTracks() {
     }
   }
 
-  // Ordenação alfabética natural padrão das faixas
   audioTracks.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }));
-
   return audioTracks;
 }
 
-function verifyLogo() {
-  const defaultLogoPath = path.join(LOGO_DIR, 'logo_CEPM_transparente.png');
-  if (fs.existsSync(defaultLogoPath)) {
-    return '/LOGO/logo_CEPM_transparente.png';
-  }
-  const rootLogoPath = path.join(ROOT_DIR, 'logo_CEPM_transparente.png');
-  if (fs.existsSync(rootLogoPath)) {
-    return '/logo_CEPM_transparente.png';
-  }
-  if (fs.existsSync(LOGO_DIR)) {
-    const logoFiles = fs.readdirSync(LOGO_DIR).filter(f => IMAGE_EXTENSIONS.has(path.extname(f).toLowerCase()));
-    if (logoFiles.length > 0) {
-      return `/LOGO/${logoFiles[0]}`;
+function syncFotosToPublic(mediaItems) {
+  ensureDir(PUBLIC_FOTOS_DIR);
+
+  const validFilenames = new Set();
+  let copiedCount = 0;
+  let alreadyUpToDate = 0;
+
+  for (const item of mediaItems) {
+    validFilenames.add(item.filename);
+    const targetPath = path.join(PUBLIC_FOTOS_DIR, item.filename);
+
+    let needsCopy = true;
+    if (fs.existsSync(targetPath)) {
+      const targetStat = fs.statSync(targetPath);
+      if (targetStat.size === item.size) {
+        needsCopy = false;
+        alreadyUpToDate++;
+      }
+    }
+
+    if (needsCopy) {
+      fs.copyFileSync(item.sourcePath, targetPath);
+      copiedCount++;
     }
   }
-  return null;
+
+  // Remoção de arquivos órfãos em public/fotos-cepm que deixaram de existir na pasta de origem
+  let removedCount = 0;
+  const existingPublicFiles = fs.readdirSync(PUBLIC_FOTOS_DIR);
+  for (const file of existingPublicFiles) {
+    if (!validFilenames.has(file)) {
+      const orphanPath = path.join(PUBLIC_FOTOS_DIR, file);
+      if (fs.statSync(orphanPath).isFile()) {
+        fs.unlinkSync(orphanPath);
+        removedCount++;
+        console.log(`🗑️ Removido arquivo órfão da pasta pública: ${file}`);
+      }
+    }
+  }
+
+  return { copiedCount, alreadyUpToDate, removedCount, totalInPublic: validFilenames.size };
 }
 
 export function generateManifest() {
-  console.log('🔍 Escaneando mídias do CEPM e gerando manifesto consolidado...');
+  console.log('🔍 Escaneando mídias do CEPM e sincronizando para pasta pública do Vite...');
 
   if (!fs.existsSync(FOTOS_DIR)) {
     console.error('❌ Diretório "FOTOS CEPM" não encontrado!');
     process.exit(1);
   }
 
-  // 1. Escanear mídias de FOTOS CEPM/
+  // 1. Escanear mídias originais de FOTOS CEPM/
   const fotosItems = scanDirectoryRecursively(FOTOS_DIR);
 
   // Ordenação natural
@@ -148,18 +220,24 @@ export function generateManifest() {
     }
   }
 
-  // 3. Atribui IDs sequenciais de 1 a N
+  // 3. Sincronização automática para public/fotos-cepm (essencial para Vercel e Vite build)
+  const syncStats = syncFotosToPublic(allMedia);
+
+  // 4. Sincronização da Logo oficial para public/logo/
+  const logoPath = syncLogoToPublic();
+
+  // 5. Sincronização de faixas de áudio
+  const audioTracks = syncAudioToPublic();
+
+  // 6. Atribui IDs sequenciais e caminhos públicos /fotos-cepm/...
   const itemsWithIds = allMedia.map((item, index) => ({
     id: index + 1,
     filename: item.filename,
-    relativePath: item.relativePath,
+    relativePath: `/fotos-cepm/${item.filename}`,
     type: item.type,
     extension: item.extension,
     folder: item.folder
   }));
-
-  const logoPath = verifyLogo();
-  const audioTracks = scanAudioTracks();
 
   const imageCount = itemsWithIds.filter(i => i.type === 'image').length;
   const videoCount = itemsWithIds.filter(i => i.type === 'video').length;
@@ -175,20 +253,21 @@ export function generateManifest() {
     items: itemsWithIds
   };
 
-  if (!fs.existsSync(OUTPUT_DIR)) {
-    fs.mkdirSync(OUTPUT_DIR, { recursive: true });
-  }
-
+  ensureDir(OUTPUT_DIR);
   fs.writeFileSync(OUTPUT_FILE, JSON.stringify(manifest, null, 2), 'utf8');
 
   console.log('==============================================');
-  console.log('✅ MANIFESTO DO CEPM GERADO COM SUCESSO!');
-  console.log(`📸 Fotografias encontradas: ${fotosItems.length}`);
+  console.log('✅ MANIFESTO DO CEPM E ARQUIVOS PÚBLICOS SINCRONIZADOS!');
+  console.log(`📸 Fotografias na pasta master (FOTOS CEPM): ${fotosItems.length}`);
   console.log(`⚠️ Duplicatas idênticas ignoradas: ${duplicates.length}`);
-  console.log(`🖼️ Fotografias válidas utilizadas: ${imageCount}`);
+  console.log(`🖼️ Fotografias válidas no manifesto: ${imageCount}`);
+  console.log(`📁 Sincronizadas em public/fotos-cepm: ${syncStats.totalInPublic} (Copiadas: ${syncStats.copiedCount}, Já atualizadas: ${syncStats.alreadyUpToDate})`);
+  if (syncStats.removedCount > 0) {
+    console.log(`🗑️ Arquivos órfãos excluídos de public/fotos-cepm: ${syncStats.removedCount}`);
+  }
   console.log(`🎬 Total de vídeos: ${videoCount}`);
   console.log(`🏷️ Total consolidado de mídias: ${itemsWithIds.length}`);
-  console.log(`🛡️ Logo identificada: ${logoPath || 'Nenhuma'}`);
+  console.log(`🛡️ Logo pública identificada: ${logoPath || 'Nenhuma'}`);
   console.log(`🎵 Músicas detectadas: ${audioTracks.length} (${audioTracks.map(t => t.name).join(', ') || 'Nenhuma música no momento - aguardando MP3'})`);
   console.log(`💾 Salvo em: ${path.relative(ROOT_DIR, OUTPUT_FILE)}`);
   console.log('==============================================');

@@ -27,13 +27,15 @@ function serveLocalFolders() {
     configureServer(server) {
       server.middlewares.use((req, res, next) => {
         const decodedUrl = decodeURIComponent(req.url.split('?')[0]);
-        const allowedPrefixes = ['/FOTOS CEPM/', '/LOGO/', '/AUDIO/', '/audio/'];
+        const allowedPrefixes = ['/fotos-cepm/', '/logo/', '/audio/', '/AUDIO/', '/FOTOS CEPM/', '/LOGO/'];
         const isAllowed = allowedPrefixes.some(prefix => decodedUrl.startsWith(prefix));
 
         if (isAllowed) {
-          // Remover barra inicial para juntar com process.cwd()
           const relativePath = decodedUrl.startsWith('/') ? decodedUrl.slice(1) : decodedUrl;
-          const filePath = path.join(process.cwd(), relativePath);
+          let filePath = path.join(process.cwd(), 'public', relativePath);
+          if (!fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) {
+            filePath = path.join(process.cwd(), relativePath);
+          }
 
           if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
             const ext = path.extname(filePath).toLowerCase();
