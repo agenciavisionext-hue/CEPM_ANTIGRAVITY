@@ -1,0 +1,23 @@
+{
+  "name": "cepm-apresentacao-audiovisual",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "manifest": "node scripts/generate-manifest.mjs",
+    "predev": "node scripts/generate-manifest.mjs",
+    "dev": "vite",
+    "prebuild": "node scripts/generate-manifest.mjs",
+    "build": "vite build",
+    "preview": "vite preview",
+    "verify": "node scripts/verify-presentation.mjs"
+  },
+  "dependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.1",
+    "vite": "^5.4.2"
+  }
+}
